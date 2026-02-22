@@ -154,132 +154,210 @@ def decide(dragon: Card, tiger: Card) -> str:
     return "I"
 
 # ================== IMAGE (PIL) ==================
+import random
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 BASE_FONT = ImageFont.load_default()
 
 def _is_red_suit(suit: str) -> bool:
     return suit in ("♥", "♦")
 
-def draw_big_text(img: Image.Image, x: int, y: int, text: str, scale: int = 8, fill=(0, 0, 0, 255)):
-    tmp = Image.new("RGBA", (300, 100), (0, 0, 0, 0))
+def _bg(w: int, h: int) -> Image.Image:
+    # 깔끔한 어두운 그라데이션 배경 + 아주 은은한 점 패턴
+    top = (13, 16, 26, 255)
+    bot = (8, 10, 18, 255)
+
+    base = Image.new("RGBA", (w, h), top)
+    overlay = Image.new("RGBA", (w, h), bot)
+    mask = Image.new("L", (w, h))
+    md = ImageDraw.Draw(mask)
+    for y in range(h):
+        md.line([(0, y), (w, y)], fill=int(255 * (y / max(1, h - 1))))
+    base.paste(overlay, (0, 0), mask)
+
+    dots = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(dots)
+    for y in range(0, h, 18):
+        for x in range(0, w, 18):
+            a = random.randint(0, 18)
+            dd.ellipse([x, y, x + 2, y + 2], fill=(255, 255, 255, a))
+    base.alpha_composite(dots)
+    return base
+
+def _shadow_box(w: int, h: int, radius=20, alpha=140) -> Image.Image:
+    sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(sh)
+    sd.rounded_rectangle([0, 0, w, h], radius=26, fill=(0, 0, 0, alpha))
+    return sh.filter(ImageFilter.GaussianBlur(radius))
+
+def _draw_text_smooth(img: Image.Image, x: int, y: int, text: str, scale: int, fill):
+    """
+    ✅ NEAREST 확대 대신:
+    1) 작은 글씨를 큰 캔버스에 찍고
+    2) LANCZOS로 '부드럽게' 키움
+    """
+    tmp = Image.new("RGBA", (420, 130), (0, 0, 0, 0))
     d = ImageDraw.Draw(tmp)
-    d.text((0, 0), text, font=BASE_FONT, fill=fill)
-    tmp = tmp.resize((tmp.size[0] * scale, tmp.size[1] * scale), resample=Image.NEAREST)
+
+    # 얇은 외곽선(가독성)
+    for ox, oy in [(-1,0),(1,0),(0,-1),(0,1)]:
+        d.text((2+ox, 2+oy), text, font=BASE_FONT, fill=(0,0,0,220))
+    d.text((2, 2), text, font=BASE_FONT, fill=fill)
+
+    # 부드러운 확대
+    tmp = tmp.resize((tmp.size[0]*scale, tmp.size[1]*scale), resample=Image.LANCZOS)
     img.alpha_composite(tmp, (x, y))
 
 def draw_suit_shape(d: ImageDraw.ImageDraw, cx: int, cy: int, suit: str, size: int = 38):
     red = suit in ("♥", "♦")
-    color = (200, 0, 0, 255) if red else (0, 0, 0, 255)
+    color = (220, 60, 60, 255) if red else (20, 20, 20, 255)
     s = size
 
     if suit == "♦":
         pts = [(cx, cy - s), (cx + s, cy), (cx, cy + s), (cx - s, cy)]
         d.polygon(pts, fill=color)
+
     elif suit == "♥":
         d.ellipse([cx - s, cy - s, cx, cy], fill=color)
         d.ellipse([cx, cy - s, cx + s, cy], fill=color)
         d.polygon([(cx - s - 2, cy - 2), (cx + s + 2, cy - 2), (cx, cy + s + 6)], fill=color)
+
     elif suit == "♣":
         d.ellipse([cx - s // 2, cy - s - 6, cx + s // 2, cy - 6], fill=color)
         d.ellipse([cx - s, cy - s // 3, cx, cy + s // 2], fill=color)
         d.ellipse([cx, cy - s // 3, cx + s, cy + s // 2], fill=color)
         d.polygon([(cx - 8, cy + s // 2), (cx + 8, cy + s // 2), (cx, cy + s + 14)], fill=color)
+
     elif suit == "♠":
         d.ellipse([cx - s, cy, cx, cy + s], fill=color)
         d.ellipse([cx, cy, cx + s, cy + s], fill=color)
         d.polygon([(cx - s - 2, cy + 6), (cx + s + 2, cy + 6), (cx, cy - s - 10)], fill=color)
         d.polygon([(cx - 8, cy + s), (cx + 8, cy + s), (cx, cy + s + 22)], fill=color)
 
-def render_card_image(card: Card, w: int = 260, h: int = 360) -> Image.Image:
-    img = Image.new("RGBA", (w, h), (255, 255, 255, 255))
+def render_card_image(card, w: int = 250, h: int = 350) -> Image.Image:
+    """
+    카드도 '깔끔'하게:
+    - 하얀 카드 + 얇은 테두리 + 은은한 하이라이트 + 그림자용 여백
+    """
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    d.rounded_rectangle([(8, 8), (w - 8, h - 8)], radius=22, outline=(0, 0, 0, 255), width=6)
-    color = (200, 0, 0, 255) if _is_red_suit(card.suit) else (0, 0, 0, 255)
+    # 카드 본체
+    d.rounded_rectangle([6, 6, w-6, h-6], radius=22, fill=(250, 250, 252, 255), outline=(40, 40, 48, 255), width=4)
 
-    draw_big_text(img, 18, 14, card.rank, scale=10, fill=color)
-    draw_suit_shape(d, 55, 120, card.suit, size=24)
+    # 상단 하이라이트
+    hi = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    hd = ImageDraw.Draw(hi)
+    hd.rounded_rectangle([10, 10, w-10, h//2], radius=18, fill=(255, 255, 255, 40))
+    img.alpha_composite(hi)
 
-    draw_suit_shape(d, w // 2, h // 2 - 10, card.suit, size=52)
-    draw_big_text(img, w // 2 - 70, h // 2 + 90, card.rank, scale=10, fill=color)
+    color = (220, 60, 60, 255) if _is_red_suit(card.suit) else (20, 20, 20, 255)
 
-    draw_suit_shape(d, w - 55, h - 120, card.suit, size=24)
-    draw_big_text(img, w - 150, h - 110, card.rank, scale=7, fill=color)
+    # 좌상단 랭크(작게, 깔끔)
+    _draw_text_smooth(img, 18, 14, card.rank, scale=7, fill=color)
+    draw_suit_shape(d, 44, 92, card.suit, size=18)
+
+    # 중앙 무늬(큰 포인트)
+    draw_suit_shape(d, w//2, h//2 - 10, card.suit, size=52)
+
     return img
 
-def _neon_rect_overlay(size_wh, rect_xyxy, color_rgba, blur_radius=16, glow_layers=2):
+def _glow_border(size_wh, rect_xyxy, color, blur=18, alpha=160):
+    """
+    승자쪽만 은은하게 글로우(네온을 과하지 않게)
+    """
     W, H = size_wh
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    x0,y0,x1,y1 = rect_xyxy
 
-    x0, y0, x1, y1 = rect_xyxy
-    od.rounded_rectangle([x0, y0, x1, y1], radius=26, outline=color_rgba, width=6)
+    # 부드러운 글로우
+    g = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(g)
+    gd.rounded_rectangle([x0, y0, x1, y1], radius=28, outline=(color[0], color[1], color[2], alpha), width=18)
+    g = g.filter(ImageFilter.GaussianBlur(blur))
+    layer.alpha_composite(g)
 
-    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    for i in range(glow_layers):
-        width = 14 + i * 6
-        alpha = max(40, color_rgba[3] - i * 60)
-        gd.rounded_rectangle([x0, y0, x1, y1], radius=26,
-                             outline=(color_rgba[0], color_rgba[1], color_rgba[2], alpha),
-                             width=width)
+    # 얇은 선명 테두리
+    ld.rounded_rectangle([x0, y0, x1, y1], radius=28, outline=(color[0], color[1], color[2], 220), width=4)
+    return layer
 
-    glow = glow.filter(ImageFilter.GaussianBlur(blur_radius))
-    overlay.alpha_composite(glow)
-    return overlay
+def render_round_image(round_id: int, dragon, tiger, winner: str) -> BytesIO:
+    """
+    ✅ 깔끔한 레이아웃:
+    - 상단: Round + WINNER 한 줄로 정리
+    - 중앙: 카드 2장 + 승자 글로우
+    - 하단: 카드 값(용/호)만 심플하게
+    """
+    # 슈퍼샘플링(3배로 그린 후 다운스케일) -> 훨씬 깔끔해짐
+    SS = 3
+    W, H = 900*SS, 520*SS
+    canvas = _bg(W, H)
 
-def render_round_image(round_id: int, dragon: Card, tiger: Card, winner: str) -> BytesIO:
-    W, H = 900, 520
-    canvas = Image.new("RGBA", (W, H), (20, 20, 26, 255))
+    # 상단 바
+    topbar = Image.new("RGBA", (W, 120*SS), (0, 0, 0, 0))
+    td = ImageDraw.Draw(topbar)
+    td.rounded_rectangle([20*SS, 18*SS, W-20*SS, 110*SS], radius=26*SS, fill=(0, 0, 0, 90))
+    canvas.alpha_composite(topbar)
 
-    draw_big_text(canvas, 28, 18, f"Round #{round_id}", scale=6, fill=(255, 255, 255, 255))
-
+    # 텍스트 한 줄로
     if winner == "D":
-        wcol = (120, 190, 255, 255)
+        wcol = (110, 190, 255, 255)
     elif winner == "T":
         wcol = (255, 140, 160, 255)
     else:
         wcol = (255, 210, 120, 255)
 
-    draw_big_text(canvas, 28, 70, f"WINNER: {CHOICES[winner]}", scale=5, fill=wcol)
-    draw_big_text(canvas, 125, 120, "DRAGON", scale=5, fill=(120, 190, 255, 255))
-    draw_big_text(canvas, 615, 120, "TIGER",  scale=5, fill=(255, 140, 160, 255))
+    _draw_text_smooth(canvas, 40*SS, 28*SS, f"Round #{round_id}", scale=6, fill=(255,255,255,255))
+    _draw_text_smooth(canvas, 360*SS, 28*SS, f"WINNER: {CHOICES[winner]}", scale=6, fill=wcol)
 
-    d_pos = (90, 165)
-    t_pos = (560, 165)
-    card_w, card_h = 260, 360
+    # 카드 위치(여백 넉넉히)
+    card_w, card_h = 250*SS, 350*SS
+    d_pos = (120*SS, 150*SS)
+    t_pos = (530*SS, 150*SS)
 
-    canvas.alpha_composite(render_card_image(dragon, card_w, card_h), d_pos)
-    canvas.alpha_composite(render_card_image(tiger, card_w, card_h), t_pos)
+    # 카드 그림자
+    sh = _shadow_box(card_w+18*SS, card_h+18*SS, radius=28*SS, alpha=110)
+    canvas.alpha_composite(sh, (d_pos[0]-6*SS, d_pos[1]-6*SS))
+    canvas.alpha_composite(sh, (t_pos[0]-6*SS, t_pos[1]-6*SS))
 
-    pad = 10
-    d_box = (d_pos[0] - pad, d_pos[1] - pad, d_pos[0] + card_w + pad, d_pos[1] + card_h + pad)
-    t_box = (t_pos[0] - pad, t_pos[1] - pad, t_pos[0] + card_w + pad, t_pos[1] + card_h + pad)
+    # 카드 렌더(카드 함수는 기본 사이즈라서 SS 반영해서 크게)
+    cd = render_card_image(dragon, w=250*SS, h=350*SS)
+    ct = render_card_image(tiger,  w=250*SS, h=350*SS)
+    canvas.alpha_composite(cd, d_pos)
+    canvas.alpha_composite(ct, t_pos)
 
+    # 라벨(간단)
+    _draw_text_smooth(canvas, 170*SS, 118*SS, "DRAGON", scale=5, fill=(110,190,255,255))
+    _draw_text_smooth(canvas, 600*SS, 118*SS, "TIGER",  scale=5, fill=(255,140,160,255))
+
+    # 승자 글로우(과하지 않게)
+    pad = 14*SS
+    d_box = (d_pos[0]-pad, d_pos[1]-pad, d_pos[0]+card_w+pad, d_pos[1]+card_h+pad)
+    t_box = (t_pos[0]-pad, t_pos[1]-pad, t_pos[0]+card_w+pad, t_pos[1]+card_h+pad)
     if winner == "D":
-        canvas.alpha_composite(_neon_rect_overlay((W, H), d_box, (120, 190, 255, 220)))
+        canvas.alpha_composite(_glow_border((W,H), d_box, (110,190,255)))
     elif winner == "T":
-        canvas.alpha_composite(_neon_rect_overlay((W, H), t_box, (255, 140, 160, 220)))
+        canvas.alpha_composite(_glow_border((W,H), t_box, (255,140,160)))
     else:
-        canvas.alpha_composite(_neon_rect_overlay((W, H), d_box, (255, 210, 120, 160), glow_layers=1))
-        canvas.alpha_composite(_neon_rect_overlay((W, H), t_box, (255, 210, 120, 160), glow_layers=1))
+        canvas.alpha_composite(_glow_border((W,H), d_box, (255,210,120), alpha=120))
+        canvas.alpha_composite(_glow_border((W,H), t_box, (255,210,120), alpha=120))
 
-    if winner == "D":
-        d_tag, t_tag = "✅ WIN", "❌ LOSE"
-    elif winner == "T":
-        d_tag, t_tag = "❌ LOSE", "✅ WIN"
-    else:
-        d_tag, t_tag = "🤝 TIE", "🤝 TIE"
+    # 하단 정보(심플하게)
+    bottom = Image.new("RGBA", (W, 90*SS), (0,0,0,0))
+    bd = ImageDraw.Draw(bottom)
+    bd.rounded_rectangle([20*SS, 0, W-20*SS, 85*SS], radius=22*SS, fill=(0,0,0,90))
+    canvas.alpha_composite(bottom, (0, 420*SS))
 
-    draw_big_text(canvas, 120, 405, d_tag, scale=5, fill=(220, 220, 220, 255))
-    draw_big_text(canvas, 600, 405, t_tag, scale=5, fill=(220, 220, 220, 255))
+    _draw_text_smooth(canvas, 50*SS, 435*SS, f"🐉 용: {dragon.text()}", scale=6, fill=(235,235,240,255))
+    _draw_text_smooth(canvas, 520*SS, 435*SS, f"🐅 호: {tiger.text()}", scale=6, fill=(235,235,240,255))
 
-    draw_big_text(canvas, 90, 455, f"용: {dragon.rank}{dragon.suit}", scale=5, fill=(220, 220, 220, 255))
-    draw_big_text(canvas, 560, 455, f"호: {tiger.rank}{tiger.suit}", scale=5, fill=(220, 220, 220, 255))
+    # ✅ 최종 다운스케일(핵심)
+    final_img = canvas.resize((900, 520), resample=Image.LANCZOS)
 
     bio = BytesIO()
     bio.name = "dragon_tiger.png"
-    canvas.save(bio, format="PNG")
+    final_img.save(bio, format="PNG")
     bio.seek(0)
     return bio
 
